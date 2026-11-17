@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Label propagation, one matrix at a time</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+  svg: { fontCache: 'global' },
+  startup: {
+    typeset: false,
+    ready() {
+      MathJax.startup.defaultReady();
+      MathJax.startup.promise.then(() => { if (window.__mjReady) window.__mjReady(); });
+    }
+  }
+};
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js" async></script>
+<style>
+:root{
+  --paper:#EDF1F4;
+  --sheet:#F9FBFC;
+  --grid:#DCE3E9;
+  --rule:#C9D3DC;
+  --ink:#17222E;
+  --muted:#5B6875;
+  --a:#2B5BA8;
+  --a-soft:#D6E1F2;
+  --b:#D9921A;
+  --b-soft:#F6E6C8;
+  --sans:"Familjen Grotesk", system-ui, sans-serif;
+  --serif:"Source Serif 4", Georgia, serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.45}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+header{max-width:1520px;margin:0 auto;padding:28px 32px 18px}
+h1{font-size:34px;line-height:1.1;font-weight:600;letter-spacing:-0.015em;margin:0 0 8px}
+.lede{font-family:var(--serif);font-size:18px;line-height:1.55;color:var(--muted);max-width:72ch;margin:0}
+
+main{max-width:1520px;margin:0 auto;padding:0 32px 56px;display:grid;grid-template-columns:380px minmax(0,1fr);gap:24px;align-items:start}
+
+/* Lesson panel */
+.lesson{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto;background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:20px 24px 24px;display:flex;flex-direction:column}
+.lesson-nav{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.lesson-count{font-size:13px;color:var(--muted);margin-right:auto}
+.dots{display:flex;gap:5px;margin-bottom:16px;flex-wrap:wrap}
+.dots button{width:26px;height:26px;border-radius:50%;border:1px solid var(--rule);background:transparent;font-size:12px;cursor:pointer;padding:0;font-variant-numeric:tabular-nums}
+.dots button[aria-current="step"]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dots button.seen{border-color:var(--ink)}
+.lesson h2{font-size:22px;line-height:1.2;font-weight:600;margin:0 0 12px;letter-spacing:-0.01em}
+.lesson-body{font-family:var(--serif);font-size:16.5px;line-height:1.62}
+.lesson-body p{margin:0 0 12px}
+.lesson-body .eq{margin:14px 0;padding:10px 0;overflow-x:auto;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.lesson-body mjx-container[display="true"]{margin:0!important}
+.try{margin-top:16px;border-left:3px solid var(--ink);padding:2px 0 2px 14px;font-family:var(--sans);font-size:14.5px;line-height:1.5}
+.try strong{display:block;font-weight:600;margin-bottom:4px}
+.try ul{margin:0;padding-left:18px}
+.try li{margin:3px 0}
+.act{border:1px solid var(--ink);background:transparent;border-radius:4px;padding:1px 8px;font-size:13.5px;cursor:pointer;white-space:nowrap}
+.act:hover{background:var(--ink);color:#fff}
+.lesson-foot{display:flex;gap:8px;margin-top:20px;padding-top:14px;border-top:1px solid var(--rule)}
+
+/* Buttons */
+.btn{border:1px solid var(--rule);background:#fff;border-radius:5px;padding:6px 12px;cursor:pointer;font-size:14px;font-weight:500}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.primary:hover{background:#2c3d50}
+.btn:disabled{opacity:.45;cursor:default}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:5px;overflow:hidden;background:#fff}
+.seg button{border:0;background:transparent;padding:4px 11px;cursor:pointer;font-size:13.5px;font-family:var(--sans)}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:#fff}
+
+/* Workspace */
+.work{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);grid-template-areas:"graph matrix" "controls controls" "pipe inspect" "chart inspect";gap:16px}
+.panel{background:var(--sheet);border:1px solid var(--rule);border-radius:10px;padding:14px 16px 16px;min-width:0}
+.panel.cue{animation:cue 1.6s ease-out 1}
+@keyframes cue{0%{box-shadow:0 0 0 0 rgba(23,34,46,.55)}100%{box-shadow:0 0 0 12px rgba(23,34,46,0)}}
+.panel h3{font-size:15px;font-weight:600;margin:0}
+.panel .sub{font-size:13px;color:var(--muted);margin:2px 0 10px}
+.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#p-graph{grid-area:graph;padding:12px 12px 10px}
+#p-matrix{grid-area:matrix}
+#p-controls{grid-area:controls;display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;padding:12px 16px}
+#p-pipe{grid-area:pipe}
+#p-inspect{grid-area:inspect}
+#p-chart{grid-area:chart}
+
+/* Graph */
+#graph{width:100%;height:auto;display:block;touch-action:none;user-select:none;-webkit-user-select:none}
+.node{cursor:grab}
+.node.dragging{cursor:grabbing}
+.node:focus{outline:none}
+.node:focus-visible .ring{stroke-width:3;stroke-dasharray:3 3}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);padding:6px 6px 0}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:50%;display:inline-block;border:1px solid var(--ink)}
+
+/* Controls */
+.ctrl-group{display:flex;align-items:center;gap:8px}
+.status{font-size:14px;font-variant-numeric:tabular-nums;color:var(--muted);min-width:15ch}
+.status b{color:var(--ink);font-weight:600}
+.sigma{display:flex;align-items:center;gap:10px;margin-left:auto}
+.sigma label{font-size:14px}
+.sigma output{font-variant-numeric:tabular-nums;font-weight:600;min-width:3ch}
+input[type=range]{width:160px;accent-color:var(--ink)}
+
+/* Matrix */
+.mtx{border-collapse:separate;border-spacing:2px;font-size:12px;font-variant-numeric:tabular-nums;margin:0 auto}
+.mtx th{white-space:nowrap;font-weight:500;color:var(--muted);padding:0 2px;font-size:12px}
+.mtx td{width:42px;height:30px;text-align:center;border-radius:3px;cursor:default;position:relative}
+.mtx td.sum{background:transparent!important;color:var(--muted);font-weight:500}
+.mtx td.sum.off{color:var(--ink);font-weight:600}
+.mtx tr.selrow td.cell{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.mtx td.selcol{outline:1.5px dashed var(--muted);outline-offset:-1px}
+.mtx td.hov{box-shadow:inset 0 0 0 2.5px var(--ink)!important}
+.mtx th.selh{color:var(--ink);font-weight:700}
+.mtx-wrap{overflow-x:auto}
+.readout{font-size:13.5px;min-height:3.1em;margin-top:10px;padding-top:8px;border-top:1px solid var(--rule);color:var(--ink);line-height:1.45}
+.readout .m{color:var(--muted)}
+
+/* Pipeline */
+.pipe{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.pipe th{font-weight:500;color:var(--muted);text-align:left;padding:0 6px 6px;font-size:12.5px;vertical-align:bottom}
+.pipe td{padding:3px 6px;vertical-align:middle}
+.pipe td.nm{width:2.4em;color:var(--muted);font-weight:500}
+.pipe tr.sel td.nm{color:var(--ink);font-weight:700}
+.pipe tr.sel td{background:#EEF2F6}
+.bar{position:relative;height:12px;display:flex;gap:2px;align-items:stretch}
+.bar i{display:block;height:100%;border-radius:2px}
+.bar i.a{background:var(--a)}
+.bar i.b{background:var(--b)}
+.bar-cell{display:flex;align-items:center;gap:6px}
+.bar-cell .bar{flex:1}
+.bar-cell em{font-style:normal;color:var(--muted);font-size:11.5px;min-width:3.2ch;text-align:right}
+.clamped{font-size:10.5px;line-height:1.2;color:var(--ink);border:1px solid var(--ink);border-radius:3px;padding:0 3px}
+.track{position:relative;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(100% - 1px),var(--rule) calc(100% - 1px));}
+
+/* Inspector */
+.lab-row{display:flex;align-items:center;gap:10px;margin:2px 0 12px;flex-wrap:wrap;font-size:14px}
+.terms{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.terms th{font-weight:500;color:var(--muted);text-align:right;padding:0 5px 5px;font-size:12px}
+.terms th:first-child{text-align:left}
+.terms td{padding:3px 5px;text-align:right;border-top:1px solid #E5EAEF}
+.terms td:first-child{text-align:left;font-weight:500}
+.terms tr.tot td{border-top:1.5px solid var(--ink);font-weight:600}
+.terms .mini{display:inline-flex;width:46px;height:9px;gap:1px;vertical-align:middle}
+.terms .mini i{display:block;height:100%}
+.terms .mini i.a{background:var(--a)}
+.terms .mini i.b{background:var(--b)}
+.note{font-size:13px;color:var(--muted);margin:10px 0 0;line-height:1.5}
+.walk{margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)}
+.walk-out{font-size:13.5px;margin-top:8px;font-variant-numeric:tabular-nums;min-height:2.8em}
+
+/* Chart */
+#chart{width:100%;height:auto;display:block}
+#chart text{font-family:var(--sans)}
+.tip{position:absolute;pointer-events:none;background:#fff;border:1px solid var(--ink);border-radius:5px;padding:6px 8px;font-size:12px;font-variant-numeric:tabular-nums;line-height:1.4;display:none;z-index:5;white-space:nowrap}
+#p-chart{position:relative}
+
+@media (max-width:1180px){
+  main{grid-template-columns:1fr}
+  .lesson{position:static;max-height:none}
+}
+@media (max-width:820px){
+  header{padding:20px 16px 12px}
+  h1{font-size:27px}
+  main{padding:0 12px 40px}
+  .work{grid-template-columns:minmax(0,1fr);grid-template-areas:"graph" "controls" "matrix" "pipe" "inspect" "chart"}
+  .sigma{margin-left:0}
+  .mtx td{width:34px;height:26px;font-size:11px}
+}
+@media (prefers-reduced-motion:reduce){
+  .panel.cue{animation:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Label propagation, one matrix at a time</h1>
+  <p class="lede">Two labeled points, five unlabeled ones, and a transition matrix that lets labels flow along the edges of a similarity graph. Work through the nine short lessons; every number on the page is live, so drag points and change σ as you go.</p>
+</header>
+
+<main>
+  <aside class="lesson" aria-labelledby="lesson-title">
+    <div class="lesson-nav">
+      <span class="lesson-count" id="lesson-count">Lesson 1 of 9</span>
+    </div>
+    <nav class="dots" id="dots" aria-label="Lessons"></nav>
+    <h2 id="lesson-title">…</h2>
+    <div class="lesson-body" id="lesson-body" aria-live="polite"></div>
+    <div class="lesson-foot">
+      <button class="btn" id="prev">Previous</button>
+      <button class="btn primary" id="next">Next lesson</button>
+    </div>
+  </aside>
+
+  <div class="work">
+    <section class="panel" id="p-graph" aria-label="Similarity graph">
+      <svg id="graph" viewBox="0 0 640 470" role="img" aria-label="Seven points in a two-dimensional feature space, connected by edges whose thickness shows similarity">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#17222E"/>
+          </marker>
+        </defs>
+        <g id="g-grid"></g>
+        <g id="g-edges"></g>
+        <g id="g-hl"></g>
+        <g id="g-nodes"></g>
+        <g id="g-walker"></g>
+      </svg>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--a)"></i>P(class A)</span>
+        <span><i class="sw" style="background:var(--b)"></i>P(class B)</span>
+        <span>Thick outline = labeled point</span>
+        <span>Edge thickness = similarity wᵢⱼ</span>
+      </div>
+    </section>
+
+    <section class="panel" id="p-matrix" aria-labelledby="mtx-title">
+      <div class="panel-head">
+        <div>
+          <h3 id="mtx-title">Matrix T</h3>
+          <p class="sub" id="mtx-sub">…</p>
+        </div>
+        <div class="seg" role="group" aria-label="Matrix to show">
+          <button data-view="W" aria-pressed="false">W</button>
+          <button data-view="T" aria-pressed="true">T</button>
+          <button data-view="Tb" aria-pressed="false">T̄</button>
+        </div>
+      </div>
+      <div class="mtx-wrap"><table class="mtx" id="mtx"></table></div>
+      <div class="readout" id="readout"><span class="m">Hover a cell to read it as a sentence.</span></div>
+    </section>
+
+    <section class="panel" id="p-controls" aria-label="Iteration controls">
+      <div class="ctrl-group">
+        <button class="btn primary" id="b-step">Step</button>
+        <button class="btn" id="b-run">Run</button>
+        <button class="btn" id="b-reset">Reset</button>
+        <button class="btn" id="b-fixed">Jump to fixed point</button>
+      </div>
+      <div class="status" id="status" aria-live="polite"></div>
+      <div class="sigma">
+        <label for="sigma">Kernel width σ</label>
+        <input type="range" id="sigma" min="0.5" max="6" step="0.1" value="1.6">
+        <output id="sigma-out" for="sigma">1.6</output>
+      </div>
+    </section>
+
+    <section class="panel" id="p-pipe" aria-labelledby="pipe-title">
+      <h3 id="pipe-title">What the next step will do</h3>
+      <p class="sub">Each row is one point's label distribution. Bar length is the row's total mass.</p>
+      <table class="pipe" id="pipe"></table>
+    </section>
+
+    <section class="panel" id="p-inspect" aria-labelledby="ins-title">
+      <h3 id="ins-title">Inside one row</h3>
+      <p class="sub" id="ins-sub">…</p>
+      <div class="lab-row">
+        <span>Label of <b id="ins-name">x₅</b>:</span>
+        <div class="seg" role="group" aria-label="Label for the selected point" id="lab-seg">
+          <button data-lab="0">Class A</button>
+          <button data-lab="1">Class B</button>
+          <button data-lab="none">Unlabeled</button>
+        </div>
+      </div>
+      <table class="terms" id="terms"></table>
+      <p class="note" id="ins-note"></p>
+      <div class="walk">
+        <button class="btn" id="b-walk">Release 1,000 random walkers</button>
+        <div class="walk-out" id="walk-out"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-chart" aria-labelledby="chart-title">
+      <h3 id="chart-title">Convergence of P(class A)</h3>
+      <p class="sub">One line per unlabeled point. Dashed line: the closed-form fixed point for the selected point.</p>
+      <svg id="chart" viewBox="0 0 480 210" role="img" aria-label="P of class A for each unlabeled point across iterations"></svg>
+      <div class="tip" id="tip"></div>
+    </section>
+  </div>
+</main>
+
+<!-- ============ Lessons ============ -->
+<template data-title="Seven points, two labels" data-select="4" data-view="T" data-reset="1" data-cue="p-graph">
+  <p>Semi-supervised learning starts with a few labeled examples and many unlabeled ones. Here \(x_1\) is labeled class A, \(x_2\) is labeled class B, and \(x_3,\dots,x_7\) have no label.</p>
+  <p>The whole method rests on one assumption: points that are close in feature space should share a label. Label propagation turns that assumption into a graph and lets labels spread along its edges.</p>
+  <p>Each circle is drawn as a vessel. Its blue share is the current belief \(P(y_i = A)\) and its amber share is \(P(y_i = B)\). Unlabeled points start half and half because nothing is known yet.</p>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li>Drag a few points around the feature space to get a feel for the layout.</li>
+      <li>Click a point to select it. Its row is highlighted in every panel.</li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="Similarity becomes edge weight" data-view="W" data-cue="p-matrix">
+  <p>Every pair of points gets an edge whose weight falls off with distance, through a Gaussian kernel:</p>
+  <div class="eq">\[ w_{ij} = \exp\!\left(-\frac{\lVert x_i - x_j\rVert^2}{\sigma^2}\right), \qquad w_{ii} = 0 \]</div>
+  <p>The matrix \(W\) is symmetric: \(x_3\) is exactly as similar to \(x_1\) as \(x_1\) is to \(x_3\). The kernel width \(\sigma\) decides how far "close" reaches. Small \(\sigma\) keeps only near neighbors; large \(\sigma\) connects everything to everything.</p>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li>Hover cells of \(W\) and watch the matching edge light up.</li>
+      <li><button class="act" data-act="sigma:0.8">Set σ = 0.8</button> then <button class="act" data-act="sigma:3.5">σ = 3.5</button>. Watch the edges thin out and fill in.</li>
+      <li><button class="act" data-act="sigma:1.6">Put σ back to 1.6</button></li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="Normalize the columns to get T" data-view="T" data-select="4" data-cue="p-matrix">
+  <p>The transition matrix rescales each column of \(W\) so it sums to one:</p>
+  <div class="eq">\[ T_{ij} = P(j \to i) = \frac{w_{ij}}{\sum_{k} w_{kj}} \]</div>
+  <p>Read it column by column. Column \(j\) says how node \(j\) splits one unit of its label among the other nodes, in proportion to similarity. \(T_{ij}\) is the share that travels from \(j\) to \(i\).</p>
+  <p>Because each column sums to one, nothing is created or lost when a node sends. But rows are not normalized. A node surrounded by points with few other neighbors receives more than one unit; an isolated node receives less.</p>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li>The dashed column belongs to the selected point. Hover its cells to see where its label goes.</li>
+      <li>Compare the bottom row (column sums, all 1.00) with the right-hand column (row sums). Bold row sums are the ones that miss 1.</li>
+      <li><button class="act" data-act="select:4">Select x₅</button>, the bridge between clusters. Where does it send most of its label?</li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="Labels as a matrix Y" data-cue="p-pipe">
+  <p>Stack every point's label distribution into an \(n \times C\) matrix. With \(n = 7\) points and \(C = 2\) classes, \(Y\) is \(7 \times 2\) and row \(i\) is \(\big(P(y_i{=}A),\; P(y_i{=}B)\big)\).</p>
+  <div class="eq">\[ Y^{(0)}_{i\cdot} = \begin{cases} \delta(y_i) & i \text{ labeled (one-hot)} \\ \big(\tfrac12,\tfrac12\big) & i \text{ unlabeled} \end{cases} \]</div>
+  <p>The first column of the pipeline panel is \(Y^{(t)}\), drawn as a two-colored bar per row. Labeled rows are solid blue or solid amber.</p>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li><button class="act" data-act="select:6">Select x₇</button> and use the label buttons under "Inside one row" to make it class A. Its row in \(Y\) becomes one-hot.</li>
+      <li>Set it back to Unlabeled before moving on.</li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="One step: Y ← TY" data-select="2" data-reset="1" data-cue="p-inspect">
+  <p>Multiplying by \(T\) lets every node collect what its neighbors send:</p>
+  <div class="eq">\[ (TY)_{ic} = \sum_{j} T_{ij}\, Y_{jc} \]</div>
+  <p>Row \(i\) of \(TY\) is a weighted mix of the neighbors' current beliefs, weighted by the share each neighbor sends to \(i\). The "Inside one row" panel lists every term of this sum for the selected point.</p>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li>With \(x_3\) selected, read its terms. Which neighbor contributes most, and why?</li>
+      <li>Look at the \(TY\) column of the pipeline. The bars have different lengths: these rows are no longer probability distributions.</li>
+      <li><button class="act" data-act="step">Step once</button> and watch the vessels change.</li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="Normalize the rows, then clamp" data-view="Tb" data-cue="p-pipe">
+  <p>Two clean-up moves follow each multiplication.</p>
+  <p><b>Row-normalize.</b> Since every row of \(Y\) sums to one, row \(i\) of \(TY\) sums to \(r_i = \sum_j T_{ij}\), the bold numbers you saw in the row-sum column. Dividing by \(r_i\) turns it back into a distribution.</p>
+  <p><b>Clamp.</b> Reset each labeled row to its one-hot label. Without this, the given labels would be washed out by their neighbors.</p>
+  <p>The normalization can be folded into the matrix itself. Define the row-normalized \(\bar T_{ij} = T_{ij} / \sum_k T_{ik}\). Splitting the nodes into labeled \(L\) and unlabeled \(U\), one full step is exactly linear:</p>
+  <div class="eq">\[ Y_U \leftarrow \bar T_{UU}\, Y_U + \bar T_{UL}\, Y_L \]</div>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li>The matrix now shows \(\bar T\). Check that every row sums to 1.00.</li>
+      <li><button class="act" data-act="step">Step</button> a few times and follow one row across the pipeline: mix, rescale, clamp.</li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="Iterate to the fixed point" data-cue="p-chart">
+  <p>Repeat the step and the unlabeled rows settle down. Convergence is guaranteed when every unlabeled point can reach some labeled point: then \(\bar T_{UU}\) has spectral radius below one, because some probability always leaks out to labeled nodes.</p>
+  <p>At the fixed point \(Y_U = \bar T_{UU} Y_U + \bar T_{UL} Y_L\). Solving for \(Y_U\):</p>
+  <div class="eq">\[ Y_U = \big(I - \bar T_{UU}\big)^{-1}\, \bar T_{UL}\, Y_L \]</div>
+  <p>The starting values of \(Y_U\) drop out completely. The answer depends only on the graph and the given labels.</p>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li><button class="act" data-act="reset">Reset</button>, then <button class="act" data-act="run">Run</button>. Watch the lines in the convergence chart flatten onto their fixed points.</li>
+      <li>Then press <button class="act" data-act="fixed">Jump to fixed point</button>. The closed form gives the same numbers in one solve.</li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="The probabilistic reading: random walks" data-select="4" data-cue="p-inspect">
+  <p>\(\bar T\) is row-stochastic, so it defines a Markov chain: a walker at \(x_i\) steps to \(x_j\) with probability \(\bar T_{ij}\). Make the labeled nodes absorbing, so a walker that reaches one stops there.</p>
+  <div class="eq">\[ Y_{ic} = P\big(\text{a walk started at } x_i \text{ is absorbed at a class-}c\text{ node}\big) \]</div>
+  <p>The matrix inverse is a sum over paths: \((I - \bar T_{UU})^{-1} = \sum_{k \ge 0} \bar T_{UU}^{\,k}\) adds up every route of length \(k\) that wanders among unlabeled points before stepping onto a labeled one. Each iteration of the algorithm adds one more path length.</p>
+  <div class="try"><strong>Try this</strong>
+    <ul>
+      <li>With \(x_5\) selected, <button class="act" data-act="walk">release 1,000 walkers</button>. One walker's path is animated; all thousand are counted.</li>
+      <li>Release again. The fraction wobbles around the fixed-point value, as a Monte Carlo estimate should.</li>
+    </ul>
+  </div>
+</template>
+
+<template data-title="Break it on purpose" data-cue="p-controls">
+  <p>Turn on the fixed point and every change updates instantly, so you can see how geometry and labels shape the answer.</p>
+  <div class="try"><strong>Experiments</strong>
+    <ul>
+      <li><button class="act" data-act="fixed">Show the fixed point</button>, then drag \(x_2\) toward the left cluster. How quickly does the bridge \(x_5\) change sides?</li>
+      <li><button class="act" data-act="sigma:0.6">σ = 0.6</button>. Column normalization rescues even tiny weights, so each point sends almost everything to its nearest neighbor. The soft probabilities harden into near-certain labels, decided by chains of nearest neighbors, even for the bridge.</li>
+      <li><button class="act" data-act="sigma:6">σ = 6</button>. All weights look alike, the geometry is forgotten, and every unlabeled point drifts toward 50/50.</li>
+      <li><button class="act" data-act="label:6:0">Label x₇ as class A</button>, a conflicting label inside the B cluster. Watch \(x_6\) get pulled between two sources.</li>
+      <li><button class="act" data-act="restore">Restore the starting setup</button></li>
+    </ul>
+  </div>
+</template>
+
+<script>
+(() => {
+"use strict";
+// ---------- constants & state ----------
+const A_COL = "#2B5BA8", B_COL = "#D9921A", INK = "#17222E", MUTED = "#5B6875";
+const START = [
+  {x:1.4,y:2.0,label:0},{x:8.7,y:3.9,label:1},{x:2.7,y:3.5,label:null},
+  {x:1.3,y:4.4,label:null},{x:4.8,y:3.1,label:null},{x:7.3,y:2.4,label:null},{x:8.4,y:1.2,label:null}
+];
+const XMAX = 10, YMAX = 7, VW = 640, VH = 470, M = {l:34,r:16,t:16,b:34};
+const R = 19;
+const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SUBS = "₀₁₂₃₄₅₆₇₈₉";
+const sub = n => String(n).split("").map(c => SUBS[+c]).join("");
+const nm = i => "x" + sub(i + 1);
+const f2 = v => (Math.abs(v) < 0.005 ? "0" : v.toFixed(2)).replace(/^0\./, ".");
+const f3 = v => v.toFixed(3);
+
+const S = {
+  nodes: START.map(n => ({...n})),
+  sigma: 1.6, view: "T", sel: 4, hover: null,
+  Y: null, t: 0, history: [], mode: "iter", lastDelta: null,
+  running: false, runTimer: null, lesson: 0, seen: new Set([0]),
+  disp: [], anim: null, converged: false
+};
+let G = {}; // computed graph quantities
+
+// ---------- math ----------
+function onehot(c){ return c === 0 ? [1,0] : [0,1]; }
+function initY(){ return S.nodes.map(n => n.label === null ? [0.5,0.5] : onehot(n.label)); }
+
+function compute(){
+  const N = S.nodes, n = N.length, s2 = S.sigma * S.sigma;
+  const W = [], dist = [];
+  for (let i=0;i<n;i++){ W.push([]); dist.push([]);
+    for (let j=0;j<n;j++){
+      const dx = N[i].x-N[j].x, dy = N[i].y-N[j].y, d2 = dx*dx+dy*dy;
+      dist[i].push(Math.sqrt(d2));
+      W[i].push(i===j ? 0 : Math.exp(-d2/s2));
+    }
+  }
+  const colSum = Array(n).fill(0);
+  for (let i=0;i<n;i++) for (let j=0;j<n;j++) colSum[j] += W[i][j];
+  const T = W.map(row => row.map((w,j) => colSum[j] > 0 ? w/colSum[j] : 0));
+  const rowSumT = T.map(r => r.reduce((a,b)=>a+b,0));
+  const Tb = T.map((r,i) => r.map(v => rowSumT[i] > 0 ? v/rowSumT[i] : 0));
+  const L = [], U = [];
+  N.forEach((nd,i) => (nd.label === null ? U : L).push(i));
+  // fixed point
+  let fixed = null;
+  if (L.length > 0){
+    const m = U.length;
+    const Amat = U.map((i,a) => U.map((j,b) => (a===b?1:0) - Tb[i][j]));
+    const B = U.map(i => {
+      let p=[0,0]; L.forEach(j => { const y = onehot(N[j].label); p[0]+=Tb[i][j]*y[0]; p[1]+=Tb[i][j]*y[1]; }); return p;
+    });
+    const sol = solve(Amat, B, m);
+    if (sol){
+      fixed = N.map(nd => nd.label === null ? null : onehot(nd.label));
+      U.forEach((i,a) => { const s = sol[a][0]+sol[a][1]; fixed[i] = s>0 ? [sol[a][0]/s, sol[a][1]/s] : [0.5,0.5]; });
+    }
+  }
+  G = {W, T, Tb, colSum, rowSumT, L, U, fixed, dist, n};
+}
+function solve(A, B, m){
+  A = A.map(r => r.slice()); B = B.map(r => r.slice());
+  for (let c=0;c<m;c++){
+    let p=c; for (let r=c+1;r<m;r++) if (Math.abs(A[r][c])>Math.abs(A[p][c])) p=r;
+    if (Math.abs(A[p][c]) < 1e-14) return null;
+    [A[c],A[p]]=[A[p],A[c]]; [B[c],B[p]]=[B[p],B[c]];
+    for (let r=0;r<m;r++){ if (r===c) continue; const f=A[r][c]/A[c][c];
+      if (!f) continue; for (let k=c;k<m;k++) A[r][k]-=f*A[c][k]; B[r][0]-=f*B[c][0]; B[r][1]-=f*B[c][1]; }
+  }
+  return B.map((b,i) => [b[0]/A[i][i], b[1]/A[i][i]]);
+}
+function stepParts(Y){
+  const n = G.n, TY = [];
+  for (let i=0;i<n;i++){ let a=0,b=0; for (let j=0;j<n;j++){ a+=G.T[i][j]*Y[j][0]; b+=G.T[i][j]*Y[j][1]; } TY.push([a,b]); }
+  const rs = TY.map(r => r[0]+r[1]);
+  const Yn = TY.map((r,i) => rs[i]>0 ? [r[0]/rs[i], r[1]/rs[i]] : [0.5,0.5]);
+  const Yc = Yn.map((r,i) => S.nodes[i].label===null ? r : onehot(S.nodes[i].label));
+  return {TY, rs, Yn, Yc};
+}
+
+// ---------- state transitions ----------
+function resetIter(){
+  stopRun();
+  S.mode = "iter"; S.Y = initY(); S.t = 0; S.history = [S.Y.map(r=>r.slice())]; S.lastDelta = null; S.converged = false;
+}
+function graphChanged(animate){
+  compute();
+  if (S.mode === "fixed" && G.fixed){ S.Y = G.fixed.map(r=>r.slice()); S.history = []; }
+  else { resetIter(); }
+  renderAll(animate);
+}
+function doStep(){
+  if (S.mode === "fixed"){ S.mode = "iter"; S.history = [S.Y.map(r=>r.slice())]; S.t = 0; }
+  const p = stepParts(S.Y);
+  let d = 0; p.Yc.forEach((r,i) => d = Math.max(d, Math.abs(r[0]-S.Y[i][0])));
+  S.Y = p.Yc; S.t++; S.lastDelta = d; S.history.push(S.Y.map(r=>r.slice()));
+  S.converged = d < 1e-4;
+  renderAll(true);
+  return d;
+}
+function startRun(){
+  if (S.running) return;
+  if (S.converged || S.mode === "fixed"){ resetIter(); renderAll(true); }
+  S.running = true; updateRunBtn();
+  const tick = () => {
+    const d = doStep();
+    if (d < 1e-4 || S.t >= 300){ stopRun(); renderStatus(); return; }
+    S.runTimer = setTimeout(tick, reduceMotion ? 60 : 380);
+  };
+  tick();
+}
+function stopRun(){ S.running = false; clearTimeout(S.runTimer); updateRunBtn(); }
+function jumpFixed(){
+  stopRun();
+  if (!G.fixed) return;
+  S.mode = "fixed"; S.Y = G.fixed.map(r=>r.slice()); S.history = []; S.converged = true;
+  renderAll(true);
+}
+
+// ---------- graph rendering ----------
+const svg = document.getElementById("graph");
+const sx = x => M.l + x / XMAX * (VW - M.l - M.r);
+const sy = y => VH - M.b - y / YMAX * (VH - M.t - M.b);
+const ix = px => (px - M.l) / (VW - M.l - M.r) * XMAX;
+const iy = py => (VH - M.b - py) / (VH - M.t - M.b) * YMAX;
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs={}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+
+function drawGrid(){
+  const g = document.getElementById("g-grid");
+  for (let x=0;x<=XMAX;x++) el("line",{x1:sx(x),x2:sx(x),y1:sy(0),y2:sy(YMAX),stroke:"#DCE3E9","stroke-width":x%5===0?1.2:0.8},g);
+  for (let y=0;y<=YMAX;y++) el("line",{x1:sx(0),x2:sx(XMAX),y1:sy(y),y2:sy(y),stroke:"#DCE3E9","stroke-width":y%5===0?1.2:0.8},g);
+  for (let x=0;x<=XMAX;x+=2){ const t=el("text",{x:sx(x),y:sy(0)+16,"text-anchor":"middle","font-size":11,fill:MUTED,"font-family":"Familjen Grotesk, sans-serif"},g); t.textContent=x; }
+  for (let y=0;y<=YMAX;y+=2){ const t=el("text",{x:sx(0)-8,y:sy(y)+4,"text-anchor":"end","font-size":11,fill:MUTED,"font-family":"Familjen Grotesk, sans-serif"},g); t.textContent=y; }
+  const a=el("text",{x:sx(XMAX),y:sy(0)+30,"text-anchor":"end","font-size":11.5,fill:MUTED,"font-family":"Familjen Grotesk, sans-serif"},g); a.textContent="feature 1";
+  const b=el("text",{x:sx(0)+4,y:sy(YMAX)-4,"font-size":11.5,fill:MUTED,"font-family":"Familjen Grotesk, sans-serif"},g); b.textContent="feature 2";
+}
+
+const nodeEls = [];
+function buildNodes(){
+  const g = document.getElementById("g-nodes");
+  g.innerHTML = "";
+  S.nodes.forEach((nd, i) => {
+    const grp = el("g",{class:"node",tabindex:0,role:"button"},g);
+    const cp = el("clipPath",{id:"clip"+i},grp); el("circle",{r:R},cp);
+    el("circle",{r:R+7,fill:"none",stroke:INK,"stroke-width":1.4,"stroke-dasharray":"3 4",class:"selring",opacity:0},grp);
+    el("rect",{x:-R,y:-R,width:2*R,height:2*R,fill:B_COL,"clip-path":`url(#clip${i})`},grp);
+    const fa = el("rect",{x:-R,y:0,width:2*R,height:R,fill:A_COL,"clip-path":`url(#clip${i})`},grp);
+    const lvl = el("line",{x1:-R,x2:R,y1:0,y2:0,stroke:"#fff","stroke-width":1.5,"clip-path":`url(#clip${i})`},grp);
+    const ring = el("circle",{r:R,fill:"none",stroke:INK,class:"ring"},grp);
+    const tag = el("text",{y:5,"text-anchor":"middle","font-size":15,"font-weight":700,"font-family":"Familjen Grotesk, sans-serif","pointer-events":"none"},grp);
+    const name = el("text",{y:R+17,"text-anchor":"middle","font-size":13.5,"font-weight":600,fill:INK,"font-family":"Source Serif 4, serif","font-style":"italic","pointer-events":"none",stroke:"#EDF1F4","stroke-width":4,"paint-order":"stroke"},grp);
+    name.textContent = "x" + sub(i+1);
+    nodeEls.push({grp, fa, lvl, ring, tag, name});
+    attachDrag(grp, i);
+  });
+}
+function setFill(i, pA){
+  const e = nodeEls[i]; const h = 2*R*pA; const top = R - h;
+  e.fa.setAttribute("y", top); e.fa.setAttribute("height", Math.max(0,h));
+  e.lvl.setAttribute("y1", top); e.lvl.setAttribute("y2", top);
+  e.lvl.setAttribute("opacity", (pA>0.01 && pA<0.99) ? 1 : 0);
+}
+function renderNodes(animate){
+  S.nodes.forEach((nd,i) => {
+    const e = nodeEls[i];
+    e.grp.setAttribute("transform", `translate(${sx(nd.x)},${sy(nd.y)})`);
+    const lab = nd.label;
+    e.ring.setAttribute("stroke-width", lab===null ? 1.5 : 4);
+    e.tag.textContent = lab===null ? "" : (lab===0 ? "A" : "B");
+    e.tag.setAttribute("fill", lab===0 ? "#fff" : INK);
+    e.grp.querySelector(".selring").setAttribute("opacity", i===S.sel ? 1 : 0);
+    const pA = S.Y[i][0];
+    e.grp.setAttribute("aria-label", `${nm(i)}, ${lab===null?"unlabeled":"labeled class "+(lab===0?"A":"B")}, P(A) ${pA.toFixed(2)}. Arrow keys move it.`);
+  });
+  const targets = S.Y.map(r => r[0]);
+  if (S.anim) cancelAnimationFrame(S.anim);
+  if (!animate || reduceMotion || S.disp.length !== targets.length){
+    S.disp = targets.slice(); targets.forEach((p,i) => setFill(i,p)); return;
+  }
+  const from = S.disp.slice(), t0 = performance.now(), dur = 420;
+  const frame = now => {
+    const k = Math.min(1, (now - t0)/dur), e = 1 - Math.pow(1-k, 3);
+    S.disp = from.map((f,i) => f + (targets[i]-f)*e);
+    S.disp.forEach((p,i) => setFill(i,p));
+    if (k < 1) S.anim = requestAnimationFrame(frame);
+  };
+  S.anim = requestAnimationFrame(frame);
+}
+function renderEdges(){
+  const g = document.getElementById("g-edges"); g.innerHTML = "";
+  let wmax = 0; G.W.forEach(r => r.forEach(w => wmax = Math.max(wmax,w)));
+  for (let i=0;i<G.n;i++) for (let j=i+1;j<G.n;j++){
+    const w = G.W[i][j] / (wmax || 1);
+    if (w < 0.004) continue;
+    el("line",{x1:sx(S.nodes[i].x),y1:sy(S.nodes[i].y),x2:sx(S.nodes[j].x),y2:sy(S.nodes[j].y),stroke:INK,"stroke-opacity":(0.12+0.6*w).toFixed(3),"stroke-width":(0.6+6*w).toFixed(2),"stroke-linecap":"round"},g);
+  }
+  renderHighlight();
+}
+function renderHighlight(){
+  const g = document.getElementById("g-hl"); g.innerHTML = "";
+  if (!S.hover) return;
+  const [i,j] = S.hover; if (i===j) return;
+  const a = S.nodes[j], b = S.nodes[i];
+  const x1=sx(a.x), y1=sy(a.y), x2=sx(b.x), y2=sy(b.y);
+  const dx=x2-x1, dy=y2-y1, L=Math.hypot(dx,dy)||1, ux=dx/L, uy=dy/L, pad=R+6;
+  const directed = S.view !== "W";
+  el("line",{x1:x1+ux*pad,y1:y1+uy*pad,x2:x2-ux*pad,y2:y2-uy*pad,stroke:INK,"stroke-width":3.5,"stroke-linecap":"round","marker-end":directed?"url(#arrow)":""},g);
+}
+
+// drag + keyboard
+function attachDrag(grp, i){
+  let start = null, moved = false;
+  grp.addEventListener("pointerdown", ev => {
+    ev.preventDefault();
+    grp.setPointerCapture(ev.pointerId);
+    start = {x:ev.clientX, y:ev.clientY}; moved = false;
+    grp.classList.add("dragging");
+  });
+  grp.addEventListener("pointermove", ev => {
+    if (!start) return;
+    if (!moved && Math.hypot(ev.clientX-start.x, ev.clientY-start.y) < 4) return;
+    moved = true;
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    S.nodes[i].x = Math.max(0.2, Math.min(XMAX-0.2, ix(p.x)));
+    S.nodes[i].y = Math.max(0.2, Math.min(YMAX-0.2, iy(p.y)));
+    if (S.sel !== i) S.sel = i;
+    graphChanged(false);
+  });
+  const end = () => {
+    if (!start) return;
+    grp.classList.remove("dragging");
+    if (!moved){ select(i); }
+    start = null;
+  };
+  grp.addEventListener("pointerup", end);
+  grp.addEventListener("pointercancel", end);
+  grp.addEventListener("keydown", ev => {
+    const k = ev.key, step = ev.shiftKey ? 0.5 : 0.15;
+    if (k === "Enter" || k === " "){ ev.preventDefault(); select(i); return; }
+    const mv = {ArrowLeft:[-step,0],ArrowRight:[step,0],ArrowUp:[0,step],ArrowDown:[0,-step]}[k];
+    if (!mv) return;
+    ev.preventDefault();
+    S.nodes[i].x = Math.max(0.2, Math.min(XMAX-0.2, S.nodes[i].x+mv[0]));
+    S.nodes[i].y = Math.max(0.2, Math.min(YMAX-0.2, S.nodes[i].y+mv[1]));
+    S.sel = i; graphChanged(false);
+  });
+}
+function select(i){ S.sel = i; renderAll(false); document.getElementById("walk-out").textContent = ""; }
+
+// ---------- matrix ----------
+const MTX_INFO = {
+  W: {title:"Similarity matrix W", sub:"w_ij = exp(−‖x_i − x_j‖² / σ²). Symmetric, zero diagonal."},
+  T: {title:"Transition matrix T", sub:"Each column of W divided by its sum. Column j: how x_j splits its label."},
+  Tb:{title:"Row-normalized T̄", sub:"Each row of T divided by its sum. Row i: where x_i gets its label from."}
+};
+function renderMatrix(){
+  const M_ = S.view==="W" ? G.W : S.view==="T" ? G.T : G.Tb, n = G.n;
+  document.getElementById("mtx-title").textContent = MTX_INFO[S.view].title;
+  document.getElementById("mtx-sub").textContent = MTX_INFO[S.view].sub;
+  document.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", b.dataset.view===S.view));
+  let mx = 0; M_.forEach(r => r.forEach(v => mx = Math.max(mx,v)));
+  const rows = M_.map(r => r.reduce((a,b)=>a+b,0));
+  const cols = Array(n).fill(0); M_.forEach(r => r.forEach((v,j) => cols[j]+=v));
+  let h = "<thead><tr><th></th>";
+  for (let j=0;j<n;j++) h += `<th scope="col" class="${j===S.sel?'selh':''}">${nm(j)}</th>`;
+  h += `<th scope="col">row Σ</th></tr></thead><tbody>`;
+  for (let i=0;i<n;i++){
+    h += `<tr class="${i===S.sel?'selrow':''}"><th scope="row" class="${i===S.sel?'selh':''}">${nm(i)}</th>`;
+    for (let j=0;j<n;j++){
+      const v = M_[i][j], a = mx>0 ? v/mx : 0, alpha = (i===j) ? 0 : 0.05 + 0.75*a;
+      const hov = S.hover && S.hover[0]===i && S.hover[1]===j;
+      h += `<td class="cell ${j===S.sel?'selcol':''} ${hov?'hov':''}" data-i="${i}" data-j="${j}" style="background:rgba(23,34,46,${alpha.toFixed(3)});color:${alpha>0.42?'#fff':INK}">${i===j?'·':f2(v)}</td>`;
+    }
+    const off = S.view!=="W" && Math.abs(rows[i]-1) > 0.005;
+    h += `<td class="sum ${off?'off':''}">${rows[i].toFixed(2)}</td></tr>`;
+  }
+  h += `<tr><th scope="row">col Σ</th>`;
+  for (let j=0;j<n;j++){ const off = S.view!=="W" && Math.abs(cols[j]-1)>0.005; h += `<td class="sum ${off?'off':''}">${cols[j].toFixed(2)}</td>`; }
+  h += `<td></td></tr></tbody>`;
+  document.getElementById("mtx").innerHTML = h;
+}
+function readout(){
+  const r = document.getElementById("readout");
+  if (!S.hover){ r.innerHTML = `<span class="m">Hover a cell to read it as a sentence.</span>`; return; }
+  const [i,j] = S.hover;
+  if (i===j){ r.innerHTML = `<span class="m">Diagonal is zero: a point does not send its label to itself.</span>`; return; }
+  if (S.view==="W") r.innerHTML = `w${sub(i+1)}${sub(j+1)} = <b>${f3(G.W[i][j])}</b>. ${nm(i)} and ${nm(j)} are ${G.dist[i][j].toFixed(2)} apart; with σ = ${S.sigma.toFixed(1)} that gives this similarity.`;
+  else if (S.view==="T") r.innerHTML = `T${sub(i+1)}${sub(j+1)} = <b>${f3(G.T[i][j])}</b>. ${nm(j)} sends ${(G.T[i][j]*100).toFixed(1)}% of its label to ${nm(i)}. <span class="m">(${f3(G.W[i][j])} ÷ column sum ${f3(G.colSum[j])})</span>`;
+  else r.innerHTML = `T̄${sub(i+1)}${sub(j+1)} = <b>${f3(G.Tb[i][j])}</b>. ${(G.Tb[i][j]*100).toFixed(1)}% of what ${nm(i)} receives comes from ${nm(j)}; a random walker at ${nm(i)} steps to ${nm(j)} with this probability.`;
+}
+const mtxEl = document.getElementById("mtx");
+mtxEl.addEventListener("mouseover", ev => {
+  const td = ev.target.closest("td.cell"); if (!td) return;
+  S.hover = [+td.dataset.i, +td.dataset.j];
+  mtxEl.querySelectorAll("td.hov").forEach(c => c.classList.remove("hov")); td.classList.add("hov");
+  renderHighlight(); readout();
+});
+mtxEl.addEventListener("mouseleave", () => { S.hover = null; mtxEl.querySelectorAll("td.hov").forEach(c => c.classList.remove("hov")); renderHighlight(); readout(); });
+mtxEl.addEventListener("click", ev => { const td = ev.target.closest("td.cell"); if (td) select(+td.dataset.i); });
+
+// ---------- pipeline ----------
+function barHTML(v, scale){
+  const a = Math.max(0, v[0]/scale*100), b = Math.max(0, v[1]/scale*100);
+  return `<div class="bar"><i class="a" style="width:${a}%"></i><i class="b" style="width:${b}%"></i></div>`;
+}
+function renderPipeline(){
+  const p = stepParts(S.Y), mxs = Math.max(1, ...p.rs);
+  const tl = S.mode==="fixed" ? "∞" : S.t;
+  let h = `<thead><tr><th></th><th>Y<sup>(${tl})</sup></th><th>TY</th><th>÷ row sum</th><th>clamp → Y<sup>(${S.mode==="fixed"?"∞":S.t+1})</sup></th></tr></thead><tbody>`;
+  for (let i=0;i<G.n;i++){
+    const lab = S.nodes[i].label, changed = lab!==null && Math.abs(p.Yn[i][0]-p.Yc[i][0])>0.005;
+    h += `<tr class="${i===S.sel?'sel':''}"><td class="nm">${nm(i)}</td>
+      <td><div class="bar-cell">${barHTML(S.Y[i],1)}<em>${S.Y[i][0].toFixed(2)}</em></div></td>
+      <td><div class="bar-cell">${barHTML(p.TY[i],mxs)}<em title="row sum">Σ${p.rs[i].toFixed(2)}</em></div></td>
+      <td><div class="bar-cell">${barHTML(p.Yn[i],1)}<em>${p.Yn[i][0].toFixed(2)}</em></div></td>
+      <td><div class="bar-cell">${barHTML(p.Yc[i],1)}<em>${p.Yc[i][0].toFixed(2)}</em>${changed?'<span class="clamped" title="reset to its given label">clamped</span>':''}</div></td></tr>`;
+  }
+  h += `</tbody>`;
+  document.getElementById("pipe").innerHTML = h;
+}
+
+// ---------- inspector ----------
+function renderInspector(){
+  const i = S.sel, lab = S.nodes[i].label;
+  document.getElementById("ins-name").textContent = nm(i);
+  document.getElementById("ins-sub").textContent = `Row ${i+1} of the next step: (TY)${sub(i+1)}c = Σⱼ T${sub(i+1)}ⱼ · Yⱼc`;
+  document.querySelectorAll("#lab-seg button").forEach(b => {
+    const v = b.dataset.lab === "none" ? null : +b.dataset.lab; b.setAttribute("aria-pressed", v===lab);
+  });
+  const terms = [];
+  for (let j=0;j<G.n;j++) if (j!==i) terms.push({j, t:G.T[i][j], y:S.Y[j]});
+  terms.sort((a,b) => b.t - a.t);
+  let sA=0, sB=0;
+  let h = `<thead><tr><th>from</th><th>T${sub(i+1)}ⱼ</th><th>Yⱼ</th><th>→ A</th><th>→ B</th></tr></thead><tbody>`;
+  terms.forEach(({j,t,y}) => {
+    const a = t*y[0], b = t*y[1]; sA += a; sB += b;
+    h += `<tr><td>${nm(j)}</td><td>${f3(t)}</td><td><span class="mini"><i class="a" style="width:${y[0]*100}%"></i><i class="b" style="width:${y[1]*100}%"></i></span></td><td>${f3(a)}</td><td>${f3(b)}</td></tr>`;
+  });
+  const s = sA+sB;
+  h += `<tr class="tot"><td>sum</td><td>${f3(G.rowSumT[i])}</td><td></td><td>${f3(sA)}</td><td>${f3(sB)}</td></tr>`;
+  h += `<tr><td>÷ ${f3(s)}</td><td></td><td></td><td><b>${f3(sA/s)}</b></td><td><b>${f3(sB/s)}</b></td></tr></tbody>`;
+  document.getElementById("terms").innerHTML = h;
+  let note = `The row sum of T for ${nm(i)} is ${G.rowSumT[i].toFixed(3)}, so the collected mass is divided by that to make a distribution.`;
+  if (lab!==null) note += ` ${nm(i)} is labeled, so after this the row is clamped back to class ${lab===0?"A":"B"}.`;
+  document.getElementById("ins-note").textContent = note;
+  const wb = document.getElementById("b-walk");
+  wb.textContent = `Release 1,000 random walkers from ${nm(i)}`;
+  wb.disabled = G.L.length === 0;
+}
+
+// ---------- random walks ----------
+function sampleRow(i){
+  const r = Math.random(); let c = 0;
+  for (let j=0;j<G.n;j++){ c += G.Tb[i][j]; if (r < c) return j; }
+  return G.n-1;
+}
+function walkFrom(i){
+  const path = [i]; let cur = i, k = 0;
+  while (S.nodes[cur].label === null && k < 20000){ cur = sampleRow(cur); path.push(cur); k++; }
+  return {path, cls: S.nodes[cur].label};
+}
+function releaseWalkers(){
+  if (!G.L.length) return;
+  const i = S.sel; let cA = 0, cB = 0, totalLen = 0, demo = null;
+  for (let w=0; w<1000; w++){ const r = walkFrom(i); if (!demo) demo = r; if (r.cls===0) cA++; else if (r.cls===1) cB++; totalLen += r.path.length-1; }
+  const fx = G.fixed ? G.fixed[i][0] : null;
+  const out = document.getElementById("walk-out");
+  out.innerHTML = S.nodes[i].label !== null
+    ? `${nm(i)} is labeled, so every walker is absorbed immediately.`
+    : `Absorbed at class A: <b>${(cA/10).toFixed(1)}%</b> &nbsp; class B: <b>${(cB/10).toFixed(1)}%</b>. Closed form says P(A) = <b>${fx.toFixed(3)}</b>. Average walk: ${(totalLen/1000).toFixed(1)} steps.`;
+  animateWalker(demo.path);
+}
+let walkTimer = null;
+function animateWalker(path){
+  const g = document.getElementById("g-walker"); g.innerHTML = ""; clearTimeout(walkTimer);
+  const pts = path.slice(0, 60).map(k => [sx(S.nodes[k].x), sy(S.nodes[k].y)]);
+  const trail = el("polyline",{fill:"none",stroke:INK,"stroke-width":2,"stroke-opacity":0.55,"stroke-dasharray":"4 4",points:pts[0].join(",")},g);
+  const dot = el("circle",{r:6,fill:"#fff",stroke:INK,"stroke-width":2.5,cx:pts[0][0],cy:pts[0][1]},g);
+  if (reduceMotion){ trail.setAttribute("points", pts.map(p=>p.join(",")).join(" ")); const l=pts[pts.length-1]; dot.setAttribute("cx",l[0]); dot.setAttribute("cy",l[1]); return; }
+  let k = 1;
+  const hop = () => {
+    if (k >= pts.length){ walkTimer = setTimeout(() => { g.innerHTML = ""; }, 1800); return; }
+    const [x0,y0] = pts[k-1], [x1,y1] = pts[k], t0 = performance.now(), dur = 230;
+    const fr = now => {
+      const u = Math.min(1,(now-t0)/dur), e = u<.5 ? 2*u*u : 1-Math.pow(-2*u+2,2)/2;
+      dot.setAttribute("cx", x0+(x1-x0)*e); dot.setAttribute("cy", y0+(y1-y0)*e);
+      if (u<1) requestAnimationFrame(fr);
+      else { trail.setAttribute("points", pts.slice(0,k+1).map(p=>p.join(",")).join(" ")); k++; walkTimer = setTimeout(hop, 60); }
+    };
+    requestAnimationFrame(fr);
+  };
+  hop();
+}
+
+// ---------- chart ----------
+const chart = document.getElementById("chart"), tip = document.getElementById("tip");
+const CW = 480, CH = 210, CM = {l:36,r:44,t:10,b:28};
+function renderChart(){
+  chart.innerHTML = "";
+  const H = S.history, U = G.U;
+  const tMax = Math.max(10, H.length-1);
+  const cx = t => CM.l + t/tMax*(CW-CM.l-CM.r), cy = v => CH-CM.b - v*(CH-CM.t-CM.b);
+  [0,0.25,0.5,0.75,1].forEach(v => {
+    el("line",{x1:CM.l,x2:CW-CM.r,y1:cy(v),y2:cy(v),stroke:v===0.5?"#C9D3DC":"#E3E8ED","stroke-width":1},chart);
+    const t = el("text",{x:CM.l-6,y:cy(v)+4,"text-anchor":"end","font-size":10.5,fill:MUTED},chart); t.textContent = v===0?"0":v===1?"1":String(v).replace(/^0/,"");
+  });
+  const ticks = []; const stepT = tMax<=12?2:tMax<=30?5:tMax<=80?10:25;
+  for (let t=0;t<=tMax;t+=stepT) ticks.push(t);
+  ticks.forEach(t => { const tx = el("text",{x:cx(t),y:CH-CM.b+15,"text-anchor":"middle","font-size":10.5,fill:MUTED},chart); tx.textContent = t; });
+  const xl = el("text",{x:CW-CM.r,y:CH-2,"text-anchor":"end","font-size":10.5,fill:MUTED},chart); xl.textContent = "iteration t";
+  if (!U.length){ const t = el("text",{x:CW/2,y:CH/2,"text-anchor":"middle","font-size":13,fill:MUTED},chart); t.textContent = "No unlabeled points."; return; }
+  if (!G.L.length){ const t = el("text",{x:CW/2,y:40,"text-anchor":"middle","font-size":13,fill:INK},chart); t.textContent = "Label at least one point to get a fixed point."; }
+  // fixed point for selected
+  if (G.fixed && S.nodes[S.sel].label===null){
+    const v = G.fixed[S.sel][0];
+    el("line",{x1:CM.l,x2:CW-CM.r,y1:cy(v),y2:cy(v),stroke:INK,"stroke-width":1.2,"stroke-dasharray":"5 4"},chart);
+  }
+  const ends = [];
+  const order = U.slice().sort((a,b) => (a===S.sel) - (b===S.sel));
+  order.forEach(i => {
+    const isSel = i===S.sel;
+    let v;
+    if (H.length){
+      const pts = H.map((Y,t) => `${cx(t).toFixed(1)},${cy(Y[i][0]).toFixed(1)}`).join(" ");
+      el("polyline",{points:pts,fill:"none",stroke:isSel?INK:"#9AA7B3","stroke-width":isSel?2.5:1.5,"stroke-linejoin":"round","stroke-linecap":"round"},chart);
+      v = H[H.length-1][i][0];
+      el("circle",{cx:cx(H.length-1),cy:cy(v),r:isSel?4:3,fill:isSel?INK:"#9AA7B3"},chart);
+    } else if (G.fixed){ v = G.fixed[i][0]; }
+    if (v!==undefined) ends.push({i, y:cy(v), isSel});
+  });
+  // de-collide end labels
+  ends.sort((a,b)=>a.y-b.y);
+  const orig = ends.map(e => e.y);
+  for (let k=1;k<ends.length;k++) if (ends[k].y - ends[k-1].y < 12) ends[k].y = ends[k-1].y + 12;
+  const shift = (orig.reduce((a,b)=>a+b,0) - ends.reduce((a,e)=>a+e.y,0)) / (ends.length||1);
+  ends.forEach(e => e.y = Math.max(CM.t+4, Math.min(CH-CM.b-2, e.y + shift)));
+  const lx = H.length ? cx(H.length-1)+8 : CW-CM.r+4;
+  ends.forEach(e => { const t = el("text",{x:Math.min(lx, CW-CM.r+6),y:e.y+4,"font-size":11.5,"font-weight":e.isSel?700:500,fill:e.isSel?INK:MUTED,"font-family":"Source Serif 4, serif","font-style":"italic"},chart); t.textContent = nm(e.i); });
+  if (!H.length && G.fixed){ const t = el("text",{x:CM.l+6,y:CM.t+12,"font-size":11.5,fill:MUTED},chart); t.textContent = "Showing the closed-form fixed point (no iterations)."; }
+  // hover layer
+  const hit = el("rect",{x:CM.l,y:CM.t,width:CW-CM.l-CM.r,height:CH-CM.t-CM.b,fill:"transparent"},chart);
+  const cross = el("line",{y1:CM.t,y2:CH-CM.b,stroke:INK,"stroke-width":1,opacity:0,"pointer-events":"none"},chart);
+  hit.addEventListener("pointermove", ev => {
+    if (!H.length) return;
+    const pt = chart.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const p = pt.matrixTransform(chart.getScreenCTM().inverse());
+    const t = Math.max(0, Math.min(H.length-1, Math.round((p.x-CM.l)/(CW-CM.l-CM.r)*tMax)));
+    cross.setAttribute("x1",cx(t)); cross.setAttribute("x2",cx(t)); cross.setAttribute("opacity",0.5);
+    tip.innerHTML = `<b>t = ${t}</b><br>` + U.map(i => `${nm(i)}: ${H[t][i][0].toFixed(3)}`).join("<br>");
+    const box = chart.getBoundingClientRect(), pbox = chart.parentElement.getBoundingClientRect();
+    const left = ev.clientX - pbox.left + 14, top = box.top - pbox.top + 6;
+    tip.style.display = "block";
+    tip.style.left = Math.min(left, pbox.width - tip.offsetWidth - 8) + "px"; tip.style.top = top + "px";
+  });
+  hit.addEventListener("pointerleave", () => { tip.style.display = "none"; cross.setAttribute("opacity",0); });
+}
+
+// ---------- status & controls ----------
+function renderStatus(){
+  const st = document.getElementById("status");
+  if (S.mode === "fixed") st.innerHTML = `<b>t = ∞</b> &nbsp;closed-form fixed point`;
+  else if (S.converged) st.innerHTML = `<b>t = ${S.t}</b> &nbsp;converged`;
+  else st.innerHTML = `<b>t = ${S.t}</b>` + (S.lastDelta!==null ? ` &nbsp;max change ${S.lastDelta.toFixed(4)}` : ` &nbsp;initial labels`);
+  document.getElementById("b-fixed").disabled = !G.fixed;
+}
+function updateRunBtn(){ document.getElementById("b-run").textContent = S.running ? "Pause" : "Run"; }
+function renderAll(animate){
+  renderEdges(); renderNodes(animate); renderMatrix(); readout(); renderPipeline(); renderInspector(); renderChart(); renderStatus();
+}
+
+document.getElementById("b-step").onclick = () => { stopRun(); doStep(); };
+document.getElementById("b-run").onclick = () => S.running ? stopRun() : startRun();
+document.getElementById("b-reset").onclick = () => { resetIter(); renderAll(true); };
+document.getElementById("b-fixed").onclick = jumpFixed;
+document.getElementById("b-walk").onclick = releaseWalkers;
+const sig = document.getElementById("sigma"), sigOut = document.getElementById("sigma-out");
+function setSigma(v){ S.sigma = v; sig.value = v; sigOut.textContent = v.toFixed(1); graphChanged(true); }
+sig.addEventListener("input", () => { S.sigma = +sig.value; sigOut.textContent = S.sigma.toFixed(1); graphChanged(false); });
+document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { S.view = b.dataset.view; renderMatrix(); readout(); renderHighlight(); });
+document.querySelectorAll("#lab-seg button").forEach(b => b.onclick = () => {
+  S.nodes[S.sel].label = b.dataset.lab==="none" ? null : +b.dataset.lab; graphChanged(true);
+});
+
+// ---------- lessons ----------
+const lessons = [...document.querySelectorAll("template[data-title]")];
+const dots = document.getElementById("dots");
+lessons.forEach((tpl, k) => {
+  const b = document.createElement("button"); b.textContent = k+1; b.setAttribute("aria-label", `Lesson ${k+1}: ${tpl.dataset.title}`);
+  b.onclick = () => goLesson(k); dots.appendChild(b);
+});
+function typesetLesson(){
+  const body = document.getElementById("lesson-body");
+  if (window.MathJax && MathJax.typesetPromise){ MathJax.typesetClear && MathJax.typesetClear([body]); MathJax.typesetPromise([body]).catch(()=>{}); }
+}
+window.__mjReady = typesetLesson;
+function goLesson(k, initial){
+  S.lesson = k; S.seen.add(k);
+  const tpl = lessons[k], d = tpl.dataset;
+  document.getElementById("lesson-title").textContent = d.title;
+  document.getElementById("lesson-count").textContent = `Lesson ${k+1} of ${lessons.length}`;
+  const body = document.getElementById("lesson-body"); body.innerHTML = ""; body.appendChild(tpl.content.cloneNode(true));
+  [...dots.children].forEach((b,j) => { b.toggleAttribute("aria-current", j===k); if (j===k) b.setAttribute("aria-current","step"); b.classList.toggle("seen", S.seen.has(j)); });
+  document.getElementById("prev").disabled = k===0;
+  const nx = document.getElementById("next"); nx.disabled = k===lessons.length-1; nx.textContent = k===lessons.length-1 ? "Last lesson" : "Next lesson";
+  if (d.view) S.view = d.view;
+  if (d.select) S.sel = +d.select;
+  if (d.reset && !initial){ resetIter(); }
+  renderAll(!initial);
+  if (d.cue && !initial){ const p = document.getElementById(d.cue); p.classList.remove("cue"); void p.offsetWidth; p.classList.add("cue"); }
+  typesetLesson();
+}
+document.getElementById("prev").onclick = () => S.lesson>0 && goLesson(S.lesson-1);
+document.getElementById("next").onclick = () => S.lesson<lessons.length-1 && goLesson(S.lesson+1);
+document.getElementById("lesson-body").addEventListener("click", ev => {
+  const b = ev.target.closest("[data-act]"); if (!b) return;
+  const [cmd, a1, a2] = b.dataset.act.split(":");
+  if (cmd==="sigma") setSigma(+a1);
+  else if (cmd==="select") select(+a1);
+  else if (cmd==="step"){ stopRun(); doStep(); }
+  else if (cmd==="run") startRun();
+  else if (cmd==="reset"){ resetIter(); renderAll(true); }
+  else if (cmd==="fixed") jumpFixed();
+  else if (cmd==="walk") releaseWalkers();
+  else if (cmd==="label"){ S.nodes[+a1].label = +a2; S.sel = +a1; graphChanged(true); }
+  else if (cmd==="restore"){ S.nodes = START.map(n=>({...n})); S.sigma = 1.6; sig.value = 1.6; sigOut.textContent = "1.6"; S.mode = "iter"; graphChanged(true); }
+});
+
+// ---------- boot ----------
+drawGrid(); buildNodes(); compute(); resetIter();
+goLesson(0, true);
+})();
+</script>
+</body>
+</html>
